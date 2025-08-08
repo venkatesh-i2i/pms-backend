@@ -7,5 +7,17 @@ export default defineConfig({
   // Expose env for client; Vite automatically injects import.meta.env.VITE_*
   define: {
     'process.env': {}
+  },
+  build: {
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          router: ['react-router-dom'],
+          redux: ['react-redux', '@reduxjs/toolkit'],
+        }
+      }
+    }
   }
 })

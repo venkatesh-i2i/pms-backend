@@ -1,20 +1,20 @@
-import { useEffect } from 'react'
+import { useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
 import { validateToken } from './store/slices/authSlice'
 import Layout from './components/Layout/Layout'
 import LoginForm from './components/Auth/LoginForm'
 import RoleBasedRoute from './components/Auth/RoleBasedRoute'
-import AdminDashboard from './components/Admin/AdminDashboard'
-import UserManagement from './components/Admin/UserManagement'
-import ProjectDashboard from './components/Dashboard/ProjectDashboard'
-import DeveloperDashboard from './components/Dashboard/DeveloperDashboard'
-import ProjectManagement from './components/Projects/ProjectManagement'
-import ProjectForm from './components/Projects/ProjectForm'
-import ProjectBoard from './components/Projects/ProjectBoard'
-import ProjectDetails from './components/Projects/ProjectDetails'
-import IssueForm from './components/Tasks/TaskForm' // Rename TaskForm to IssueForm later
-import TimeTracking from './components/Tasks/TimeTracking'
+const AdminDashboard = lazy(() => import('./components/Admin/AdminDashboard'))
+const UserManagement = lazy(() => import('./components/Admin/UserManagement'))
+const ProjectDashboard = lazy(() => import('./components/Dashboard/ProjectDashboard'))
+const DeveloperDashboard = lazy(() => import('./components/Dashboard/DeveloperDashboard'))
+const ProjectManagement = lazy(() => import('./components/Projects/ProjectManagement'))
+const ProjectForm = lazy(() => import('./components/Projects/ProjectForm'))
+const ProjectBoard = lazy(() => import('./components/Projects/ProjectBoard'))
+const ProjectDetails = lazy(() => import('./components/Projects/ProjectDetails'))
+const IssueForm = lazy(() => import('./components/Tasks/TaskForm')) // Rename TaskForm to IssueForm later
+const TimeTracking = lazy(() => import('./components/Tasks/TimeTracking'))
 import './services/api'
 
 const App = () => {
@@ -58,7 +58,8 @@ const App = () => {
   return (
     <Router>
       <Layout>
-        <Routes>
+        <Suspense fallback={<div style={{ padding: 16 }}>Loading…</div>}>
+          <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={getDashboardComponent()} />
           <Route
@@ -83,7 +84,8 @@ const App = () => {
           <Route path="/projects/:projectId/issues/create" element={<IssueForm />} />
           <Route path="/issues/:issueId/time-tracking" element={<TimeTracking />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
+          </Routes>
+        </Suspense>
       </Layout>
     </Router>
   )
