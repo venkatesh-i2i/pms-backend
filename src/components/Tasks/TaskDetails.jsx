@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
 import { fetchTaskById, updateTask } from '../../store/slices/tasksSlice'
 import TaskComments from './TaskComments'
-import FileAttachments from '../Files/FileAttachments'
+import FileUpload from '../Files/FileUpload'
 import TimeTracking from './TimeTracking'
 import { colors, typography, spacing, shadows, borderRadius } from '../../styles/theme'
 
@@ -275,7 +275,13 @@ const TaskDetails = () => {
             )}
 
             {activeTab === 'attachments' && (
-              <FileAttachments taskId={taskId} title="Task Attachments" />
+              <FileUpload
+                projectId={projectId}
+                taskId={taskId}
+                onUploadSuccess={(files) => console.log('Files uploaded:', files)}
+                onUploadError={(error) => console.error('Upload error:', error)}
+                showFileList={true}
+              />
             )}
 
             {activeTab === 'time' && (

@@ -6,7 +6,10 @@ import { fetchProjectById } from '../../store/slices/projectsSlice'
 import { fetchWorkLogs, logTime } from '../../store/slices/tasksSlice'
 import TaskComments from '../Tasks/TaskComments'
 import QuickAssignmentModal from '../Issues/QuickAssignmentModal'
+import FileUpload from '../Files/FileUpload'
 import { colors, typography, spacing, shadows, borderRadius } from '../../styles/theme'
+import api from '../../services/api'
+import fileService from '../../services/fileService'
 
 // Priority color helper at module scope so style factories can access it
 const getPriorityColor = (priority) => {
@@ -27,7 +30,7 @@ const ProjectBoard = () => {
   const { projectId } = useParams()
   const dispatch = useDispatch()
   const navigate = useNavigate()
-  const { /* user */ } = useSelector((state) => state.auth)
+  const { user } = useSelector((state) => state.auth)
   const { issues, loading, error } = useSelector((state) => state.issues)
   const { currentProject } = useSelector((state) => state.projects)
   const [activeIssue, setActiveIssue] = useState(null)
@@ -41,6 +44,16 @@ const ProjectBoard = () => {
   const [workDate, setWorkDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [workDescription, setWorkDescription] = useState('')
   const [isLoggingTime, setIsLoggingTime] = useState(false)
+  const [showProjectFiles, setShowProjectFiles] = useState(false)
+  const [projectFiles, setProjectFiles] = useState([])
+  const [projectFilesLoading, setProjectFilesLoading] = useState(false)
+  const [showProjectUploader, setShowProjectUploader] = useState(false)
+  const [taskFiles, setTaskFiles] = useState([])
+  const [taskFilesLoading, setTaskFilesLoading] = useState(false)
+  const [showTaskUploader, setShowTaskUploader] = useState(false)
+  const [deletingFileId, setDeletingFileId] = useState(null)
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState({ id: null, scope: null })
 
   useEffect(() => {
     if (projectId) {
@@ -49,12 +62,48 @@ const ProjectBoard = () => {
     }
   }, [dispatch, projectId])
 
+  // Load project files when Files panel opens
+  useEffect(() => {
+    const loadProjectFiles = async () => {
+      if (!projectId || !showProjectFiles) return
+      setProjectFilesLoading(true)
+      try {
+        const files = await fileService.getProjectFiles(projectId)
+        setProjectFiles(Array.isArray(files) ? files : [])
+      } catch (e) {
+        console.error('Failed to fetch project files', e)
+        setProjectFiles([])
+      } finally {
+        setProjectFilesLoading(false)
+      }
+    }
+    loadProjectFiles()
+  }, [projectId, showProjectFiles])
+
   // Load work logs when opening an issue
   useEffect(() => {
     if (activeIssue?.id) {
       dispatch(fetchWorkLogs(activeIssue.id))
     }
   }, [dispatch, activeIssue?.id])
+
+  // Load task files when opening an issue
+  useEffect(() => {
+    const loadTaskFiles = async () => {
+      if (!activeIssue?.id) return
+      setTaskFilesLoading(true)
+      try {
+        const files = await fileService.getTaskFiles(activeIssue.id)
+        setTaskFiles(Array.isArray(files) ? files : [])
+      } catch (e) {
+        console.error('Failed to fetch task files', e)
+        setTaskFiles([])
+      } finally {
+        setTaskFilesLoading(false)
+      }
+    }
+    loadTaskFiles()
+  }, [activeIssue?.id])
 
   const columns = [
     { id: 'TODO', title: 'To Do', color: '#97A0AF' },
@@ -91,6 +140,89 @@ const ProjectBoard = () => {
   const handleAssignmentModalClose = () => {
     setShowAssignmentModal(false)
     setIssueToAssign(null)
+  }
+
+  const handleProjectFileUpload = async (uploadedFiles) => {
+    console.log('Project files uploaded:', uploadedFiles)
+    setShowProjectUploader(false)
+    // Refresh list
+    try {
+      const files = await fileService.getProjectFiles(projectId)
+      setProjectFiles(Array.isArray(files) ? files : [])
+    } catch {}
+  }
+
+  const handleTaskFileUpload = async (uploadedFiles) => {
+    console.log('Task files uploaded:', uploadedFiles)
+    setShowTaskUploader(false)
+    // Refresh list
+    try {
+      const files = await fileService.getTaskFiles(activeIssue?.id)
+      setTaskFiles(Array.isArray(files) ? files : [])
+    } catch {}
+  }
+
+  const handleFileUploadError = (error) => {
+    console.error('File upload error:', error)
+    // Could show an error notification here
+  }
+
+  // Role/ownership check for delete visibility
+  const getRoleNames = () => {
+    if (!user) return []
+    if (Array.isArray(user.roles)) {
+      return user.roles.map((r) => (typeof r === 'string' ? r : r?.name)).filter(Boolean)
+    }
+    return user.role ? [user.role] : []
+  }
+
+  const hasAnyRole = (roles) => {
+    const names = getRoleNames()
+    return roles.some((r) => names.includes(r))
+  }
+
+  const canDeleteFile = (file) => {
+    if (!user || !file) return false
+    if (hasAnyRole(['ADMIN', 'MANAGER'])) return true
+    return file.uploadedBy?.id && user.id && file.uploadedBy.id === user.id
+  }
+
+  const handleDeleteFile = async (fileId, scope) => {
+    if (!fileId) return
+    setDeletingFileId(fileId)
+    try {
+      await fileService.deleteFile(fileId)
+      // Refresh respective list
+      if (scope === 'project') {
+        const files = await fileService.getProjectFiles(projectId)
+        setProjectFiles(Array.isArray(files) ? files : [])
+      } else if (scope === 'task' && activeIssue?.id) {
+        const files = await fileService.getTaskFiles(activeIssue.id)
+        setTaskFiles(Array.isArray(files) ? files : [])
+      }
+    } catch (e) {
+      console.error('Failed to delete file', e)
+      alert('Unable to delete file. You may not have permission.')
+    } finally {
+      setDeletingFileId(null)
+    }
+  }
+
+  const requestDelete = (fileId, scope) => {
+    setDeleteTarget({ id: fileId, scope })
+    setIsDeleteConfirmOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    const { id, scope } = deleteTarget || {}
+    setIsDeleteConfirmOpen(false)
+    await handleDeleteFile(id, scope)
+    setDeleteTarget({ id: null, scope: null })
+  }
+
+  const cancelDelete = () => {
+    setIsDeleteConfirmOpen(false)
+    setDeleteTarget({ id: null, scope: null })
   }
 
   // Helpers for time logging
@@ -224,6 +356,7 @@ const ProjectBoard = () => {
   }
 
   return (
+    <>
     <div style={styles.container}>
       {/* Header */}
       <div style={styles.header}>
@@ -249,6 +382,16 @@ const ProjectBoard = () => {
                 <path d="M5 12H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
               Create Issue
+            </button>
+            <button 
+              style={styles.actionBtn}
+              onClick={() => setShowProjectFiles(!showProjectFiles)}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M14 2V8H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Files
             </button>
             <button style={styles.actionBtn}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -317,6 +460,86 @@ const ProjectBoard = () => {
           </button>
         </div>
       </div>
+
+      {/* Project Files Section */}
+      {showProjectFiles && (
+        <div style={styles.filesSection}>
+          <div style={styles.filesSectionHeader}>
+            <h3 style={styles.filesSectionTitle}>Project Files</h3>
+            <div style={{ display: 'flex', gap: spacing[2], alignItems: 'center' }}>
+              <button
+                onClick={() => setShowProjectUploader((v) => !v)}
+                style={styles.actionBtn}
+              >
+                {showProjectUploader ? 'Close' : 'Add File'}
+              </button>
+              <button 
+                onClick={() => setShowProjectFiles(false)}
+                style={styles.closeSectionBtn}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2"/>
+                  <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div style={styles.filesSectionContent}>
+            {/* List files */}
+            {projectFilesLoading ? (
+              <div style={{ padding: spacing[3], color: colors.text.secondary }}>Loading files…</div>
+            ) : projectFiles.length === 0 ? (
+              <div style={{ padding: spacing[3], color: colors.text.secondary }}>No files</div>
+            ) : (
+              projectFiles.map((f) => {
+                return (
+                  <div key={f.id} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: spacing[2], border: `1px solid ${colors.border.primary}`, borderRadius: borderRadius.base,
+                    background: colors.background.secondary, marginBottom: spacing[2]
+                  }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontWeight: 600 }}>{f.originalFilename || f.name}</span>
+                      <span style={{ color: colors.text.secondary, fontSize: typography.fontSize.xs }}>
+                        {f.fileSize ? `${Math.round(f.fileSize / 1024)} KB` : ''}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: spacing[2] }}>
+                      <button
+                        onClick={() => fileService.downloadFile(f.id, f.originalFilename || f.name)}
+                        style={styles.actionBtn}
+                      >
+                        Download
+                      </button>
+                      {canDeleteFile(f) && (
+                        <button
+                          onClick={() => requestDelete(f.id, 'project')}
+                          style={{ ...styles.actionBtn, backgroundColor: colors.danger[50], color: colors.danger[600] }}
+                          disabled={deletingFileId === f.id}
+                        >
+                          {deletingFileId === f.id ? 'Deleting…' : 'Delete'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })
+            )}
+
+            {/* Uploader only when requested */}
+            {showProjectUploader && (
+              <div style={{ marginTop: spacing[3] }}>
+                <FileUpload
+                  projectId={projectId}
+                  onUploadSuccess={handleProjectFileUpload}
+                  onUploadError={handleFileUploadError}
+                  className="project-file-upload"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Kanban Board */}
       <div style={styles.board}>
@@ -546,6 +769,74 @@ const ProjectBoard = () => {
                   <div style={styles.detailItem}>
                     <span style={styles.detailLabel}>Status</span>
                     <span style={styles.statusBadge}>{activeIssue.status}</span>
+                  </div>
+                </div>
+                
+                {/* Files */}
+                <div style={styles.detailSection}>
+                  <h3 style={styles.sectionTitle}>Files</h3>
+                  {/* List task files */}
+                  {taskFilesLoading ? (
+                    <div style={{ color: colors.text.secondary }}>Loading files…</div>
+                  ) : taskFiles.length === 0 ? (
+                    <div style={{ color: colors.text.secondary }}>No files</div>
+                  ) : (
+                    taskFiles.map((f) => {
+                      return (
+                        <div key={f.id} style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          padding: spacing[2], border: `1px solid ${colors.border.primary}`, borderRadius: borderRadius.base,
+                          background: colors.background.secondary, marginBottom: spacing[2]
+                        }}>
+                          <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            <span style={{ fontWeight: 600 }}>{f.originalFilename || f.name}</span>
+                            <span style={{ color: colors.text.secondary, fontSize: typography.fontSize.xs }}>
+                              {f.fileSize ? `${Math.round(f.fileSize / 1024)} KB` : ''}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', gap: spacing[2] }}>
+                            <button
+                              onClick={() => fileService.downloadFile(f.id, f.originalFilename || f.name)}
+                              style={styles.actionBtn}
+                            >
+                              Download
+                            </button>
+                            {canDeleteFile(f) && (
+                              <button
+                              onClick={() => requestDelete(f.id, 'task')}
+                                style={{ ...styles.actionBtn, backgroundColor: colors.danger[50], color: colors.danger[600] }}
+                                disabled={deletingFileId === f.id}
+                              >
+                                {deletingFileId === f.id ? 'Deleting…' : 'Delete'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                  {/* Add file button toggles uploader */}
+                  <div style={{ marginTop: spacing[2] }}>
+                    <button
+                      onClick={() => setShowTaskUploader((v) => !v)}
+                      style={styles.actionBtn}
+                    >
+                      {showTaskUploader ? 'Close' : 'Add File'}
+                    </button>
+                  </div>
+                  {showTaskUploader && (
+                    <div style={{ marginTop: spacing[2] }}>
+                      <FileUpload
+                        projectId={projectId}
+                        taskId={activeIssue.id}
+                        onUploadSuccess={handleTaskFileUpload}
+                        onUploadError={handleFileUploadError}
+                        className="task-file-upload"
+                      />
+                    </div>
+                  )}
+                </div>
+
                 {/* Comments */}
                 <div style={styles.detailSection}>
                   <h3 style={styles.sectionTitle}>Comments</h3>
@@ -615,7 +906,6 @@ const ProjectBoard = () => {
                   </div>
                 </div>
               </div>
-                </div>
                 
                 {(activeIssue.estimatedTime || activeIssue.actualTime) && (
                 <div style={styles.detailSection}>
@@ -654,7 +944,6 @@ const ProjectBoard = () => {
               </div>
             </div>
           </div>
-        </div>
       )}
 
       {/* Quick Assignment Modal */}
@@ -663,8 +952,27 @@ const ProjectBoard = () => {
         isOpen={showAssignmentModal}
         onClose={handleAssignmentModalClose}
       />
+      {isDeleteConfirmOpen && (
+        <div style={styles.confirmOverlay}>
+          <div style={styles.confirmModal}>
+            <h3 style={styles.confirmTitle}>Delete file?</h3>
+            <p style={styles.confirmText}>This action cannot be undone.</p>
+            <div style={styles.confirmActions}>
+              <button onClick={cancelDelete} style={styles.cancelBtn}>Cancel</button>
+              <button
+                onClick={confirmDelete}
+                style={styles.dangerBtn}
+                disabled={deletingFileId === deleteTarget.id}
+              >
+                {deletingFileId === deleteTarget.id ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-  )
+    </>
+  );
 }
 
 const styles = {
@@ -1324,6 +1632,98 @@ const styles = {
     fontSize: typography.fontSize.base,
     color: colors.text.secondary,
     margin: 0,
+  },
+  filesSection: {
+    maxWidth: '1400px',
+    margin: '0 auto',
+    padding: `${spacing[4]} ${spacing[4]} 0`,
+    backgroundColor: colors.background.primary,
+    borderRadius: borderRadius.lg,
+    border: `1px solid ${colors.border.primary}`,
+    marginTop: spacing[4],
+  },
+  filesSectionHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing[4],
+    paddingBottom: spacing[3],
+    borderBottom: `1px solid ${colors.border.primary}`,
+  },
+  filesSectionTitle: {
+    fontSize: typography.fontSize.lg,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.text.primary,
+    margin: 0,
+  },
+  closeSectionBtn: {
+    padding: spacing[2],
+    backgroundColor: 'transparent',
+    border: 'none',
+    color: colors.text.secondary,
+    cursor: 'pointer',
+    borderRadius: borderRadius.base,
+    transition: 'all 0.2s ease-in-out',
+    '&:hover': {
+      backgroundColor: colors.background.secondary,
+      color: colors.text.primary,
+    },
+  },
+  filesSectionContent: {
+    paddingBottom: spacing[4],
+  },
+  confirmOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1100,
+  },
+  confirmModal: {
+    backgroundColor: colors.background.primary,
+    borderRadius: borderRadius.lg,
+    boxShadow: shadows.lg,
+    width: '90%',
+    maxWidth: '360px',
+    padding: spacing[4],
+  },
+  confirmTitle: {
+    margin: 0,
+    fontSize: typography.fontSize.lg,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.text.primary,
+  },
+  confirmText: {
+    marginTop: spacing[2],
+    fontSize: typography.fontSize.sm,
+    color: colors.text.secondary,
+  },
+  confirmActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: spacing[2],
+    marginTop: spacing[4],
+  },
+  cancelBtn: {
+    padding: `${spacing[2]} ${spacing[3]}`,
+    backgroundColor: colors.background.secondary,
+    color: colors.text.primary,
+    border: `1px solid ${colors.border.primary}`,
+    borderRadius: borderRadius.base,
+    cursor: 'pointer',
+  },
+  dangerBtn: {
+    padding: `${spacing[2]} ${spacing[3]}`,
+    backgroundColor: colors.danger[500],
+    color: colors.text.inverse,
+    border: 'none',
+    borderRadius: borderRadius.base,
+    cursor: 'pointer',
   },
 }
 

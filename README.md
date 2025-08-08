@@ -81,6 +81,11 @@ npm run dev
 - `npm run lint` - Run ESLint
 - `npm run preview` - Preview production build
 
+## 📚 Documentation
+
+- Development Guide: [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md)
+- AI Prompt Library: [docs/AI_PROMPT_LIBRARY.md](docs/AI_PROMPT_LIBRARY.md)
+
 ## 📋 API Endpoints
 
 The application expects the following API endpoints:
